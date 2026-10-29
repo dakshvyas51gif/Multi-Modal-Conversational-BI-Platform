@@ -1,0 +1,24 @@
+# AI agents + LLM (if an error occurs with Gemini: pip install "crewai[google-genai]")
+crewai
+
+# Voice (ffmpeg needs to be installed separately for Whisper)
+openai-whisper
+gTTS
+
+# Database + SQL
+supabase
+SQLAlchemy
+psycopg2-binary
+sqlglot
+
+# Charts + data
+pandas
+plotly
+
+# Web server
+fastapi
+uvicorn
+python-multipart
+
+# For reading .env files
+python-dotenv

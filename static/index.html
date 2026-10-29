@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f8fafc" />
+  <title>Conversational BI</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Conversational BI home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Conversational BI</span>
+      </a>
+      <div class="top-actions">
+        <button class="icon-button" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">☾</button>
+        <button class="avatar" title="Profile" aria-label="Profile">U</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar" aria-label="Main navigation">
+        <button class="nav-item active" data-view="Chat"><span class="nav-icon">▣</span><span>Chat</span></button>
+        <button class="nav-item" data-view="History"><span class="nav-icon">◷</span><span>History</span></button>
+        <button class="nav-item" data-view="Data Sources"><span class="nav-icon">▤</span><span>Data Sources</span></button>
+        <button class="nav-item" data-view="Settings"><span class="nav-icon">⚙</span><span>Settings</span></button>
+      </aside>
+
+      <main class="main-grid">
+        <section class="panel ask-panel" aria-labelledby="askTitle">
+          <div class="panel-heading">
+            <h1 id="askTitle">Ask your data</h1>
+            <p>Use text or voice to get insights from your data.</p>
+          </div>
+
+          <div class="mode-switch" role="tablist" aria-label="Input mode">
+            <button class="mode active" data-mode="text" role="tab" aria-selected="true">▢ <span>Text</span></button>
+            <button class="mode" data-mode="voice" role="tab" aria-selected="false">♩ <span>Voice</span></button>
+          </div>
+
+          <div class="conversation" id="conversation" aria-live="polite">
+            <div class="message user-message"><div class="bubble">Show me total sales by month for this year</div><span class="user-chip">U</span></div>
+            <div class="message assistant-message"><span class="bot-chip">✦</span><div class="bubble assistant-bubble">Here are the total sales by month for this year. I’ve generated a chart and key insights for you.</div></div>
+          </div>
+
+          <section class="sql-card" aria-label="Generated SQL">
+            <div class="sql-heading"><span>▤ &nbsp;Generated SQL</span><button class="copy-button" id="copySql" title="Copy SQL">Copy</button></div>
+            <pre><code id="sqlCode">SELECT
+  DATE_TRUNC('month', order_date) AS month,
+  SUM(total_amount) AS total_sales
+FROM sales
+WHERE order_date &gt;= '2026-01-01'
+GROUP BY month
+ORDER BY month;</code></pre>
+          </section>
+
+          <form class="composer" id="queryForm">
+            <label class="sr-only" for="queryInput">Ask a question about your data</label>
+            <input id="queryInput" type="text" placeholder="Type your question here..." autocomplete="off" />
+            <button class="mic-button" type="button" id="micButton" aria-label="Use voice input" title="Use voice input">🎙</button>
+            <button class="send-button" type="submit" aria-label="Send question" title="Send question">➤</button>
+          </form>
+          <p class="demo-note">Demo data shown · Connect a database to query your own data.</p>
+        </section>
+
+        <section class="panel results-panel" aria-labelledby="resultsTitle">
+          <div class="results-topline">
+            <h2 id="resultsTitle">Results</h2>
+            <div class="view-switch" role="tablist" aria-label="Result format">
+              <button class="view-button active" data-result-view="chart" role="tab" aria-selected="true">Chart</button>
+              <button class="view-button" data-result-view="table" role="tab" aria-selected="false">Table</button>
+            </div>
+          </div>
+
+          <section class="chart-card" id="chartView" aria-label="Monthly sales bar chart">
+            <h3 id="chartTitle">Total sales by month (2026)</h3>
+            <div class="chart-wrap">
+              <div class="y-labels" aria-hidden="true"><span>250K</span><span>200K</span><span>150K</span><span>100K</span><span>50K</span><span>0</span></div>
+              <div class="plot-area">
+                <div class="grid-lines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <div class="bars" id="bars"></div>
+                <div class="x-labels" id="xLabels"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="table-card hidden" id="tableView" aria-label="Monthly sales data table">
+            <h3>Monthly sales data</h3>
+            <div class="table-scroll"><table><thead><tr><th>Month</th><th>Total sales</th></tr></thead><tbody id="salesTable"></tbody></table></div>
+          </section>
+
+          <section class="insights-card" aria-labelledby="insightsTitle">
+            <h3 id="insightsTitle"><span class="sparkle">✦</span> Key insights</h3>
+            <ul id="insightsList">
+              <li>Total sales show a steady growth trend throughout the year.</li>
+              <li>December recorded the highest sales at around 240K.</li>
+              <li>Sales increase more noticeably from August onwards.</li>
+            </ul>
+          </section>
+
+          <section class="audio-card" aria-labelledby="audioTitle">
+            <h3 id="audioTitle"><span class="speaker-icon">◖))</span> Audio explanation</h3>
+            <div class="audio-controls">
+              <button id="speakButton" class="play-button" aria-label="Play audio explanation" title="Read insights aloud">▶</button>
+              <span class="audio-time" id="audioStatus">Read aloud</span>
+              <div class="audio-track"><span></span></div>
+              <button id="stopSpeak" class="volume-button" aria-label="Stop audio explanation" title="Stop audio">■</button>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

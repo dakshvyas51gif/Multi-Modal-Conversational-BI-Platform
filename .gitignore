@@ -1,0 +1,23 @@
+# Secrets (never upload these to GitHub)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+env/
+
+# Project-generated files
+output_chart.html
+summary_audio.mp3
+*.mp3
+*.wav
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
