@@ -1,191 +1,320 @@
-const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-let monthlySales = [55, 72, 90, 98, 124, 142, 142, 158, 173, 191, 212, 240];
-let currentMode = 'text';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+
+let currentMode = "text";
 let toastTimer;
+let busy = false;
+let recorder = null;
+let stream = null;
+let chunks = [];
 
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
-
-function showToast(message) {
-  const toast = $('#toast');
-  toast.textContent = message;
-  toast.classList.add('show');
+function toast(message) {
+  const el = $("#toast");
+  el.textContent = message;
+  el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove('show'), 2300);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2800);
 }
 
-function renderChart() {
-  const bars = $('#bars');
-  const labels = $('#xLabels');
-  const max = Math.max(250, ...monthlySales);
-  bars.innerHTML = monthlySales.map((value, i) =>
-    `<div class="bar" style="height:${Math.max(2, value / max * 100)}%" title="${monthNames[i]}: ${value}K" aria-label="${monthNames[i]} sales ${value} thousand"></div>`
-  ).join('');
-  labels.innerHTML = monthNames.map((month) => `<span>${month}</span>`).join('');
-  $('#salesTable').innerHTML = monthlySales.map((value, i) => `<tr><td>${monthNames[i]} 2026</td><td>${formatSales(value * 1000)}</td></tr>`).join('');
+function setBusy(value) {
+  busy = value;
+  $("#queryInput").disabled = value;
+  $("#micButton").disabled = value;
+  $(".send-button").disabled = value;
+  $(".send-button").textContent = value ? "…" : "➤";
 }
 
-function formatSales(value) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+function addMessage(text, role) {
+  const message = document.createElement("div");
+  message.className = `message ${role}-message`;
+  const chip = document.createElement("span");
+  chip.className = role === "user" ? "user-chip" : "bot-chip";
+  chip.textContent = role === "user" ? "U" : "✦";
+  const bubble = document.createElement("div");
+  bubble.className = role === "user" ? "bubble" : "bubble assistant-bubble";
+  bubble.textContent = text;
+  if (role === "user") message.append(bubble, chip);
+  else message.append(chip, bubble);
+  $("#conversation").append(message);
+  $("#conversation").scrollTop = $("#conversation").scrollHeight;
+  return bubble;
 }
 
-function summarizeQuery(query) {
-  const q = query.toLowerCase();
-  if (q.includes('month') && (q.includes('sale') || q.includes('revenue'))) {
-    return {
-      reply: 'Here is the monthly trend from the demo dataset. The chart and table have been refreshed for this example.',
-      title: 'Total sales by month (2026)',
-      insights: [
-        `Sales are highest in ${monthNames[monthlySales.indexOf(Math.max(...monthlySales))]} at around ${Math.max(...monthlySales)}K.`,
-        'The demo data shows an overall upward trend across the year.',
-        'Use a connected database for real business figures.'
-      ]
-    };
+function getRows(data) {
+  if (typeof data === "string") {
+    try { data = JSON.parse(data); } catch { return { columns: [], rows: [] }; }
   }
-  if (q.includes('highest') || q.includes('top')) {
-    const index = monthlySales.indexOf(Math.max(...monthlySales));
-    return { reply: `In this demo data, ${monthNames[index]} has the highest monthly sales at about ${monthlySales[index]}K.`, title: 'Highest monthly sales (demo)', insights: [`${monthNames[index]} is the highest month in the sample.`, 'The values are illustrative and not connected to a live database.', 'Connect your data source to calculate actual rankings.'] };
+  if (Array.isArray(data)) {
+    return { columns: data.length ? Object.keys(data[0]) : [], rows: data };
   }
-  if (q.includes('average') || q.includes('avg')) {
-    const avg = monthlySales.reduce((a, b) => a + b, 0) / monthlySales.length;
-    return { reply: `The average monthly sales in the demo dataset are around ${Math.round(avg)}K.`, title: 'Average monthly sales (demo)', insights: [`Average monthly sales: approximately ${Math.round(avg)}K.`, 'The result is calculated from the illustrative chart values.', 'Connect a database to analyze your actual figures.'] };
+  if (data && typeof data === "object") {
+    const rows = Array.isArray(data.rows) ? data.rows : Array.isArray(data.data) ? data.data : [];
+    const columns = Array.isArray(data.columns) && data.columns.length
+      ? data.columns : rows.length ? Object.keys(rows[0]) : [];
+    return { columns, rows, truncated: data.truncated, rowCount: data.row_count };
   }
-  return { reply: 'I have recorded your question in this UI prototype. To return accurate results, connect a database and add a text-to-SQL backend for this type of query.', title: 'Demo results', insights: ['This interface currently uses sample data only.', 'No live SQL query has been executed.', 'A backend connection is needed for accurate answers.'] };
+  return { columns: [], rows: [] };
 }
 
-function addMessage(query, result) {
-  const conversation = $('#conversation');
-  const user = document.createElement('div');
-  user.className = 'message user-message';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.textContent = query;
-  const chip = document.createElement('span');
-  chip.className = 'user-chip';
-  chip.textContent = 'U';
-  user.append(bubble, chip);
-  const assistant = document.createElement('div');
-  assistant.className = 'message assistant-message';
-  const bot = document.createElement('span');
-  bot.className = 'bot-chip';
-  bot.textContent = '✦';
-  const answer = document.createElement('div');
-  answer.className = 'bubble assistant-bubble';
-  answer.textContent = result.reply;
-  assistant.append(bot, answer);
-  conversation.append(user, assistant);
-  conversation.scrollTop = conversation.scrollHeight;
-  $('#chartTitle').textContent = result.title;
-  $('#insightsList').innerHTML = result.insights.map(item => `<li>${item}</li>`).join('');
-  $('#sqlCode').textContent = '-- Demo mode: SQL is not executed.\n-- Connect a database and secure query backend to enable this.\nSELECT month, SUM(total_amount) AS total_sales\nFROM sales\nGROUP BY month\nORDER BY month;';
-}
+function renderTable(data) {
+  const { columns, rows, truncated } = getRows(data);
+  const head = $("#resultsTableHead");
+  const body = $("#salesTable");
+  head.replaceChildren();
+  body.replaceChildren();
 
-$('#queryForm').addEventListener('submit', (event) => {
-  event.preventDefault();
-  const input = $('#queryInput');
-  const query = input.value.trim();
-  if (!query) { showToast('Enter a question about your data first.'); input.focus(); return; }
-  const result = summarizeQuery(query);
-  addMessage(query, result);
-  input.value = '';
-  showToast('Demo response generated. No live query was run.');
-});
-
-$$('.mode').forEach(button => button.addEventListener('click', () => {
-  currentMode = button.dataset.mode;
-  $$('.mode').forEach(item => {
-    const active = item === button;
-    item.classList.toggle('active', active);
-    item.setAttribute('aria-selected', String(active));
+  const header = document.createElement("tr");
+  (columns.length ? columns : ["Results"]).forEach((name) => {
+    const th = document.createElement("th");
+    th.textContent = name;
+    header.append(th);
   });
-  if (currentMode === 'voice') {
-    $('#queryInput').placeholder = 'Tap the microphone to speak...';
-    $('#micButton').focus();
-    showToast('Voice mode selected. Tap the microphone to start.');
-  } else {
-    $('#queryInput').placeholder = 'Type your question here...';
-    $('#queryInput').focus();
-  }
-}));
+  head.append(header);
 
-$('#micButton').addEventListener('click', () => {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    showToast('Voice input is not supported in this browser. Try Chrome.');
+  if (!rows.length || !columns.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = Math.max(columns.length, 1);
+    cell.textContent = "No tabular rows were returned.";
+    row.append(cell);
+    body.append(row);
     return;
   }
-  const recognition = new SpeechRecognition();
-  recognition.lang = 'en-IN';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  $('#micButton').textContent = '…';
-  recognition.onresult = (event) => {
-    $('#queryInput').value = event.results[0][0].transcript;
-    $('#queryInput').focus();
-    showToast('Voice captured. Press send to continue.');
-  };
-  recognition.onerror = () => showToast('Could not recognize speech. Please try again.');
-  recognition.onend = () => { $('#micButton').textContent = '🎙'; };
-  try { recognition.start(); } catch { $('#micButton').textContent = '🎙'; showToast('Microphone could not start. Check browser permission.'); }
+
+  rows.forEach((record) => {
+    const row = document.createElement("tr");
+    columns.forEach((name) => {
+      const cell = document.createElement("td");
+      const value = record?.[name];
+      cell.textContent = value == null ? "—" :
+        typeof value === "object" ? JSON.stringify(value) : String(value);
+      row.append(cell);
+    });
+    body.append(row);
+  });
+  if (truncated) toast("Showing the first 500 returned rows.");
+}
+
+function getInsights(summary) {
+  const lines = String(summary || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const bullets = lines
+    .filter((s) => /^([-*•]|\d+[.)])\s+/.test(s))
+    .map((s) => s.replace(/^([-*•]|\d+[.)])\s+/, "").trim())
+    .filter((s) => s && !/^(chart|audio) (path|file)\s*:/i.test(s));
+  return bullets.length ? bullets.slice(0, 6) : [String(summary || "No insights returned.")];
+}
+
+function setAudio(url) {
+  const audio = $("#audioPlayer");
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  $("#audioProgress").style.width = "0%";
+  $("#speakButton").textContent = "▶";
+  $("#speakButton").disabled = !url;
+  $("#stopSpeak").disabled = !url;
+  $("#audioStatus").textContent = url ? "Audio ready" : "Audio was not generated";
+  if (url) {
+    audio.src = url;
+    audio.load();
+  }
+}
+
+function updateResults(result, pendingBubble) {
+  const summary = result.summary || "Query completed, but no summary was returned.";
+  pendingBubble.textContent = summary;
+  $("#sqlCode").textContent = result.sql || "-- No SQL was returned.";
+  $("#insightsList").replaceChildren();
+  getInsights(summary).forEach((text) => {
+    const li = document.createElement("li");
+    li.textContent = text;
+    $("#insightsList").append(li);
+  });
+
+  renderTable(result.data);
+  const chartUrl = result.visualization?.chart_url;
+  $("#chartFrame").classList.toggle("hidden", !chartUrl);
+  $("#chartEmpty").classList.toggle("hidden", Boolean(chartUrl));
+  $("#chartTitle").textContent = chartUrl ? "Interactive query visualization" : "Chart unavailable";
+  if (chartUrl) $("#chartFrame").src = chartUrl;
+  else {
+    $("#chartFrame").removeAttribute("src");
+    $("#chartEmpty").textContent = "No chart was generated for this query.";
+  }
+  setAudio(result.audio || null);
+}
+
+async function apiError(response) {
+  try {
+    const data = await response.json();
+    return data.detail || data.message || `Request failed (${response.status}).`;
+  } catch {
+    return `Request failed (${response.status}).`;
+  }
+}
+
+async function submitToBackend(url, options, label) {
+  if (busy) return;
+  setBusy(true);
+  const userBubble = addMessage(label, "user");
+  const pending = addMessage("Working on your query…", "assistant");
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) throw new Error(await apiError(response));
+    const result = await response.json();
+    userBubble.textContent = result.query || label;
+    updateResults(result, pending);
+    toast("Query completed.");
+  } catch (error) {
+    pending.textContent = `Could not process this query: ${error.message}`;
+    toast(error.message);
+  } finally {
+    setBusy(false);
+    $("#queryInput").focus();
+  }
+}
+
+$("#queryForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = $("#queryInput");
+  const query = input.value.trim();
+  if (!query) return toast("Enter a question about your data first.");
+  input.value = "";
+  submitToBackend("/api/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  }, query);
 });
 
-$$('.view-button').forEach(button => button.addEventListener('click', () => {
-  const view = button.dataset.resultView;
-  $$('.view-button').forEach(item => {
+$$(".mode").forEach((button) => button.addEventListener("click", () => {
+  currentMode = button.dataset.mode;
+  $$(".mode").forEach((item) => {
     const active = item === button;
-    item.classList.toggle('active', active);
-    item.setAttribute('aria-selected', String(active));
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
   });
-  $('#chartView').classList.toggle('hidden', view !== 'chart');
-  $('#tableView').classList.toggle('hidden', view !== 'table');
+  $("#queryInput").placeholder = currentMode === "voice"
+    ? "Record your question with the microphone..." : "Type your question here...";
+  if (currentMode === "voice") toast("Tap the microphone to start or stop recording.");
+  else $("#queryInput").focus();
 }));
 
-$('#copySql').addEventListener('click', async () => {
-  const sql = $('#sqlCode').textContent;
+function extensionFor(mime) {
+  if (mime.includes("mp4")) return ".mp4";
+  if (mime.includes("ogg")) return ".ogg";
+  if (mime.includes("wav")) return ".wav";
+  if (mime.includes("mpeg")) return ".mp3";
+  return ".webm";
+}
+
+async function uploadRecording(blob) {
+  const form = new FormData();
+  form.append("file", blob, `recording${extensionFor(blob.type)}`);
+  await submitToBackend("/api/voice-query", { method: "POST", body: form }, "Voice query");
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    return toast("Recording needs a supported browser and HTTPS or localhost.");
+  }
   try {
-    await navigator.clipboard.writeText(sql);
-    showToast('SQL copied.');
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+    const mime = types.find((type) => MediaRecorder.isTypeSupported(type));
+    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    chunks = [];
+    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => {
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+      recorder = null;
+      $("#micButton").textContent = "🎙";
+      $("#micButton").setAttribute("aria-label", "Start voice recording");
+      if (blob.size) await uploadRecording(blob);
+      else toast("No audio was recorded.");
+    };
+    recorder.start();
+    $("#micButton").textContent = "■";
+    $("#micButton").setAttribute("aria-label", "Stop voice recording");
+    toast("Recording… tap the microphone again to finish.");
+  } catch (error) {
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    toast(`Microphone error: ${error.message}`);
+  }
+}
+
+$("#micButton").addEventListener("click", () => {
+  if (recorder?.state === "recording") recorder.stop();
+  else if (!busy) startRecording();
+});
+
+$$(".view-button").forEach((button) => button.addEventListener("click", () => {
+  const view = button.dataset.resultView;
+  $$(".view-button").forEach((item) => {
+    const active = item === button;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
+  });
+  $("#chartView").classList.toggle("hidden", view !== "chart");
+  $("#tableView").classList.toggle("hidden", view !== "table");
+}));
+
+$("#copySql").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("#sqlCode").textContent);
+    toast("SQL copied.");
   } catch {
-    const temp = document.createElement('textarea');
-    temp.value = sql; document.body.appendChild(temp); temp.select();
-    const copied = document.execCommand('copy'); temp.remove();
-    showToast(copied ? 'SQL copied.' : 'Could not copy SQL.');
+    toast("Could not copy SQL. Check clipboard permissions.");
   }
 });
 
-$('#speakButton').addEventListener('click', () => {
-  if (!('speechSynthesis' in window)) { showToast('Audio playback is not supported in this browser.'); return; }
-  window.speechSynthesis.cancel();
-  const insightText = [...$('#insightsList').querySelectorAll('li')].map(li => li.textContent).join('. ');
-  const utterance = new SpeechSynthesisUtterance(`Here are your key insights. ${insightText}`);
-  utterance.lang = 'en-IN';
-  utterance.onstart = () => { $('#audioStatus').textContent = 'Speaking…'; $('#speakButton').textContent = 'Ⅱ'; };
-  utterance.onend = () => { $('#audioStatus').textContent = 'Read aloud'; $('#speakButton').textContent = '▶'; };
-  utterance.onerror = () => { $('#audioStatus').textContent = 'Read aloud'; $('#speakButton').textContent = '▶'; };
-  window.speechSynthesis.speak(utterance);
+$("#speakButton").addEventListener("click", async () => {
+  try { await $("#audioPlayer").play(); }
+  catch (error) { toast(`Could not play audio: ${error.message}`); }
 });
-$('#stopSpeak').addEventListener('click', () => {
-  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-  $('#audioStatus').textContent = 'Read aloud'; $('#speakButton').textContent = '▶';
+$("#stopSpeak").addEventListener("click", () => {
+  const audio = $("#audioPlayer");
+  audio.pause();
+  audio.currentTime = 0;
+  $("#audioStatus").textContent = "Audio ready";
+  $("#speakButton").textContent = "▶";
+  $("#audioProgress").style.width = "0%";
+});
+$("#audioPlayer").addEventListener("play", () => {
+  $("#audioStatus").textContent = "Playing…";
+  $("#speakButton").textContent = "Ⅱ";
+});
+$("#audioPlayer").addEventListener("pause", () => {
+  if (!$("#audioPlayer").ended) {
+    $("#audioStatus").textContent = "Paused";
+    $("#speakButton").textContent = "▶";
+  }
+});
+$("#audioPlayer").addEventListener("ended", () => {
+  $("#audioStatus").textContent = "Playback finished";
+  $("#speakButton").textContent = "▶";
+});
+$("#audioPlayer").addEventListener("timeupdate", () => {
+  const audio = $("#audioPlayer");
+  $("#audioProgress").style.width = `${audio.duration ? audio.currentTime / audio.duration * 100 : 0}%`;
 });
 
-$('#themeToggle').addEventListener('click', () => {
-  document.body.classList.toggle('dark');
-  const dark = document.body.classList.contains('dark');
-  $('#themeToggle').textContent = dark ? '☀' : '☾';
-  $('#themeToggle').title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+$("#themeToggle").addEventListener("click", () => {
+  document.body.classList.toggle("dark");
+  const dark = document.body.classList.contains("dark");
+  $("#themeToggle").textContent = dark ? "☀" : "☾";
+  $("#themeToggle").title = dark ? "Switch to light mode" : "Switch to dark mode";
 });
 
-$$('.nav-item').forEach(button => button.addEventListener('click', () => {
-  $$('.nav-item').forEach(item => item.classList.toggle('active', item === button));
-  const view = button.dataset.view;
-  if (view === 'Chat') return;
-  const messages = {
-    'History': 'Chat history will appear here once conversation storage is connected.',
-    'Data Sources': 'Database connections can be configured here when a backend is added.',
-    'Settings': 'Basic preferences are available in this prototype. Use the moon icon to switch themes.'
+$$(".nav-item").forEach((button) => button.addEventListener("click", () => {
+  $$(".nav-item").forEach((item) => item.classList.toggle("active", item === button));
+  const views = {
+    History: "Chat history is stored in Supabase. A history browser is not wired into this page yet.",
+    "Data Sources": "Database credentials are configured in the backend environment.",
+    Settings: "Use the moon icon to switch between light and dark themes.",
   };
-  showToast(messages[view] || `${view} selected.`);
+  if (button.dataset.view !== "Chat") toast(views[button.dataset.view]);
 }));
-
-renderChart();
