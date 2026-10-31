@@ -1,24 +1,24 @@
-# AI agents + LLM (if an error occurs with Gemini: pip install "crewai[google-genai]")
-crewai
+# Recommended Python version: 3.11
+# FFmpeg is a separate system dependency required by OpenAI Whisper.
 
-# Voice (ffmpeg needs to be installed separately for Whisper)
+# CrewAI + native Google Gemini integration
+crewai[google-genai]>=1.15,<2.0
+
+# FastAPI backend
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.7,<3
+
+# Environment and database
+python-dotenv>=1.0
+supabase>=2.0
+SQLAlchemy>=2.0,<3
+psycopg2-binary>=2.9
+sqlglot>=25
+
+# Speech, data processing, visualization, and audio
 openai-whisper
-gTTS
-
-# Database + SQL
-supabase
-SQLAlchemy
-psycopg2-binary
-sqlglot
-
-# Charts + data
-pandas
-plotly
-
-# Web server
-fastapi
-uvicorn
-python-multipart
-
-# For reading .env files
-python-dotenv
+pandas>=2.0
+plotly>=5.0
+gTTS>=2.5
