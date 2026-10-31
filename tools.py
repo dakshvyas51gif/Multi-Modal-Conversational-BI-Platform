@@ -1,49 +1,85 @@
 import os
-import whisper
-from typing import Optional
-from dotenv import load_dotenv
-from crewai.tools import tool
 import re
-from supabase import create_client, Client
-import sqlglot
-from sqlalchemy import create_engine, text
 import json
+from functools import lru_cache
+from pathlib import Path
+from typing import Optional
+from uuid import uuid4
+
+import whisper
+import sqlglot
+from sqlglot import exp
 import pandas as pd
 import plotly.express as px
 from gtts import gTTS
+from dotenv import load_dotenv
+from crewai.tools import tool
+from sqlalchemy import create_engine, text
 
-load_dotenv()  # .env se keys aayengi
+load_dotenv()
 
-@tool("Audio Transcription Tool")
+
+# -------------------- Shared resources --------------------
+
+@lru_cache(maxsize=1)
+def _get_whisper_model():
+    """Whisper model ko ek baar load karke reuse karta hai."""
+    model_name = os.getenv("WHISPER_MODEL", "base")
+    return whisper.load_model(model_name)
+
+
+@lru_cache(maxsize=1)
+def _get_database_engine():
+    """Database engine ko reuse karta hai."""
+    connection_string = os.getenv("DB_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("DB_CONNECTION_STRING .env mein set nahi hai.")
+
+    return create_engine(
+        connection_string,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
+
+
+def _unique_output_path(default_name: str, requested_name: Optional[str] = None) -> Path:
+    """Har chart/audio output ke liye unique filename banata hai."""
+    output_dir = Path(os.getenv("BI_OUTPUT_DIR", "outputs"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = Path(requested_name or default_name).name
+    requested_path = Path(safe_name)
+    suffix = requested_path.suffix or Path(default_name).suffix
+    unique_name = f"{requested_path.stem}_{uuid4().hex[:8]}{suffix}"
+    return output_dir / unique_name
+
+
+# -------------------- Normal Python function (STT) --------------------
+# Ye CrewAI Agent nahi hai aur @tool bhi nahi hai.
+# Audio input milne par agent.py se Crew start hone se pehle call hota hai.
+
 def transcribe_audio_tool(audio_path: str) -> str:
-    """Takes the local path of an audio file (e.g., 'sample.mp3' or 'audio.wav')
-
-    and transcribes it into text using OpenAI Whisper.
-    """
+    """Local audio file ko Whisper library se text mein convert karta hai."""
     try:
-        # Load the Whisper model ('tiny', 'base', 'small', 'medium', 'large')
-        # 'base' or 'small' is recommended for a good balance of speed and accuracy.
-        model = whisper.load_model("base")
+        path = Path(audio_path).expanduser()
+        if not path.is_file():
+            return f"ERROR: Audio file nahi mili: {audio_path}"
 
-        # Transcribe the audio file
-        result = model.transcribe(audio_path)
-
-        return result["text"]
+        result = _get_whisper_model().transcribe(str(path))
+        transcript = result.get("text", "").strip()
+        if not transcript:
+            return "ERROR: Audio se koi speech transcribe nahi hui."
+        return transcript
 
     except Exception as e:
-        return f"Error transcribing audio: {str(e)}"
+        return f"ERROR: Audio transcription failed: {e}"
 
 
-
+# -------------------- CrewAI Tools --------------------
 
 @tool("Check Query Safety Tool")
 def check_query_safety_tool(user_query: str) -> str:
-    """Checks input user queries for suspicious inputs, prompt injection attempts,
-
-    malicious command patterns, SQL injections, and policy violations.
-    Returns whether the query is safe or flagged with specific reasons.
-    """
-    # 1. Patterns for Prompt Injection Attacks
+    """User query mein common prompt-injection aur unsafe command patterns check karta hai."""
     prompt_injection_patterns = [
         r"ignore (all )?previous instructions",
         r"disregard all prior instructions",
@@ -53,19 +89,17 @@ def check_query_safety_tool(user_query: str) -> str:
         r"jailbreak mode",
     ]
 
-    # 2. Patterns for Malicious Commands / SQL Injection
     malicious_code_patterns = [
-        r"(DROP|DELETE|TRUNCATE|ALTER)\s+TABLE",
-        r"DELETE\s+FROM|INSERT\s+INTO|;\s*(DROP|UPDATE)",
-        r"UNION\s+SELECT",
+        r"\b(DROP|DELETE|TRUNCATE|ALTER)\s+TABLE\b",
+        r"\bDELETE\s+FROM\b|\bINSERT\s+INTO\b|;\s*\b(DROP|UPDATE)\b",
+        r"\bUNION\s+SELECT\b",
         r"<script.*?>.*?</script>",
-        r"rm\s+-rf",
-        r"sudo\s+",
-        r"eval\(",
-        r"exec\(",
+        r"\brm\s+-rf\b",
+        r"\bsudo\s+",
+        r"\beval\s*\(",
+        r"\bexec\s*\(",
     ]
 
-    # 3. Policy Violations (Unsafe / Banned Content Keywords)
     policy_violation_keywords = [
         "hate speech",
         "how to build a bomb",
@@ -74,114 +108,117 @@ def check_query_safety_tool(user_query: str) -> str:
         "credit card generator",
     ]
 
-    query_lower = user_query.lower()
-
-    # Check for Prompt Injection
     for pattern in prompt_injection_patterns:
         if re.search(pattern, user_query, re.IGNORECASE):
-            return "FLAGGED: Potential Prompt Injection detected."
+            return "FLAGGED: Potential prompt injection detected."
 
-    # Check for Malicious Commands / Injection Code
     for pattern in malicious_code_patterns:
         if re.search(pattern, user_query, re.IGNORECASE):
-            return "FLAGGED: Suspicious code or injection syntax detected."
+            return "FLAGGED: Suspicious code or SQL injection syntax detected."
 
-    # Check for Policy Violations
+    query_lower = user_query.lower()
     for keyword in policy_violation_keywords:
         if keyword in query_lower:
-            return f"FLAGGED: Content policy violation detected (Keyword: '{keyword}')."
+            return f"FLAGGED: Policy violation keyword detected: {keyword}."
 
-    # If all checks pass
-    return "SAFE: The query passed all security and policy checks."
-
-
-@tool("Supabase Query Tool")
-def query_supabase_table(table_name: str) -> str:
-    """Fetches records/data from a specific table in Supabase
-
-    using the official Supabase Python client.
-    """
-    SUPABASE_URL = os.getenv("SUPABASE_URL")
-    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-    try:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-        # Fetch data from the table
-        response = supabase.table(table_name).select("*").limit(10).execute()
-
-        return json.dumps(response.data, default=str)
-    except Exception as e:
-        return f"Error fetching data from Supabase: {str(e)}"
+    return "SAFE: Query passed the basic security checks."
 
 
 @tool("Get Database Schema Tool")
 def get_database_schema_tool(schema_name: str = "public") -> str:
-    """Reads the real database schema (tables, columns and data types)
-
-    from PostgreSQL so SQL is generated using only existing tables and columns.
-    """
+    """PostgreSQL schema se tables, columns aur data types read karta hai."""
     try:
-        engine = create_engine(os.getenv("DB_CONNECTION_STRING"))
         query = text(
-            "SELECT table_name, column_name, data_type FROM information_schema.columns "
-            "WHERE table_schema = :s AND table_name <> 'user_clint' "
+            "SELECT table_name, column_name, data_type "
+            "FROM information_schema.columns "
+            "WHERE table_schema = :schema_name AND table_name <> 'user_clint' "
             "ORDER BY table_name, ordinal_position"
         )
-        with engine.connect() as connection:
-            rows = connection.execute(query, {"s": schema_name}).fetchall()
+
+        with _get_database_engine().connect() as connection:
+            rows = connection.execute(query, {"schema_name": schema_name}).fetchall()
 
         schema = {}
         for table_name, column_name, data_type in rows:
             schema.setdefault(table_name, []).append(f"{column_name} ({data_type})")
 
-        return "\n".join(f"{t}: {', '.join(c)}" for t, c in schema.items()) or "No tables found."
+        return "\n".join(
+            f"{table}: {', '.join(columns)}" for table, columns in schema.items()
+        ) or "No tables found."
 
     except Exception as e:
-        return f"Error reading database schema: {str(e)}"
+        return f"Error reading database schema: {e}"
+
+
+def _validate_readonly_select(sql_query: str) -> Optional[str]:
+    """Only one PostgreSQL SELECT/UNION statement allow karta hai."""
+    if not sql_query or not sql_query.strip():
+        return "SQL query is empty."
+
+    try:
+        statements = [s for s in sqlglot.parse(sql_query, read="postgres") if s is not None]
+        if len(statements) != 1:
+            return "Only one SQL statement is allowed."
+
+        parsed = statements[0]
+        if not isinstance(parsed, (exp.Select, exp.Union)):
+            return "Only read-only SELECT queries are allowed."
+
+        if parsed.args.get("into") is not None:
+            return "SELECT INTO is not allowed."
+        if parsed.args.get("locks"):
+            return "Row-locking SELECT queries are not allowed."
+
+        return None
+
+    except Exception as e:
+        return f"Invalid SQL syntax: {e}"
 
 
 @tool("Validate SQL Tool")
 def validate_sql_tool(sql_query: str) -> str:
-    """Validates PostgreSQL queries using sqlglot and ensures they are strictly read-only (SELECT only)."""
-    try:
-        # Parse query as PostgreSQL
-        statements = sqlglot.parse(sql_query, read="postgres")
-
-        # Sirf ek statement allowed (SELECT 1; DROP TABLE x bypass na ho)
-        if len(statements) != 1:
-            return "VIOLATION: Only a single SQL statement is allowed."
-
-        # Check if it's a SELECT statement (WITH/CTE aur UNION bhi allowed)
-        parsed = statements[0]
-        if not isinstance(parsed, (sqlglot.exp.Select, sqlglot.exp.Union)):
-            return "VIOLATION: Only read-only SELECT queries are allowed."
-
-        return "VALID: Query is safe and syntactically correct."
-
-    except Exception as e:
-        return f"INVALID SYNTAX: {str(e)}"
+    """SQL ko parse karke single read-only SELECT check karta hai."""
+    validation_error = _validate_readonly_select(sql_query)
+    if validation_error:
+        return f"INVALID: {validation_error}"
+    return "VALID: Single read-only SELECT query passed parser validation."
 
 
 @tool("Execute Readonly SQL Tool")
 def execute_readonly_sql_tool(sql_query: str) -> str:
-    """Executes a validated read-only SQL query on the Supabase PostgreSQL
+    """SQL validate karke PostgreSQL read-only transaction mein execute karta hai."""
+    validation_error = _validate_readonly_select(sql_query)
+    if validation_error:
+        return f"VIOLATION: {validation_error}"
 
-    database and returns the result rows as a string.
-    """
     try:
-        engine = create_engine(os.getenv("DB_CONNECTION_STRING"))
+        engine = _get_database_engine()
         with engine.connect() as connection:
-            result = connection.execute(text(sql_query))
-            rows = [dict(row._mapping) for row in result]
+            with connection.begin():
+                # Transaction-level protection. DB credentials should also be read-only.
+                connection.execute(text("SET TRANSACTION READ ONLY"))
+                connection.execute(text("SET LOCAL statement_timeout = '15000ms'"))
 
-            if not rows:
-                return "Query executed successfully, but returned 0 rows."
+                result = connection.execute(text(sql_query))
+                columns = list(result.keys())
+                rows = [dict(row) for row in result.mappings().fetchmany(501)]
+                truncated = len(rows) > 500
+                if truncated:
+                    rows = rows[:500]
 
-            return json.dumps(rows, default=str)
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "columns": columns,
+                        "row_count": len(rows),
+                        "truncated": truncated,
+                        "rows": rows,
+                    },
+                    default=str,
+                )
 
     except Exception as e:
-        return f"Error executing SQL query: {str(e)}"
+        return f"ERROR: SQL execution failed: {e}"
 
 
 @tool("Create PowerBI Style Chart Tool")
@@ -193,75 +230,78 @@ def create_plotly_chart_tool(
     title: str = "PowerBI Dashboard",
     size_col: Optional[str] = None,
 ) -> str:
-    """Creates interactive Power BI style charts (Bar, Column, Line, Area,
-
-    Pie, Donut, Scatter, Bubble, Treemap, Funnel) and saves as 'output_chart.html'.
-    """
+    """Data se interactive Plotly chart banakar unique HTML file mein save karta hai."""
     try:
-        # Load data into DataFrame
         data = json.loads(data_json) if isinstance(data_json, str) else data_json
         df = pd.DataFrame(data)
+        if df.empty:
+            return "ERROR: Dataset is empty; chart was not created."
 
-        c_type = chart_type.lower()
+        required_columns = [x_col, y_col]
+        if chart_type.lower() == "bubble" and size_col:
+            required_columns.append(size_col)
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            return f"ERROR: Missing chart columns: {', '.join(missing_columns)}"
 
-        # Map Power BI chart types to Plotly
-        if c_type in ["bar", "column"]:
+        chart = chart_type.lower()
+        if chart in ["bar", "column"]:
             fig = px.bar(df, x=x_col, y=y_col, title=title)
-        elif c_type == "line":
+        elif chart == "line":
             fig = px.line(df, x=x_col, y=y_col, title=title)
-        elif c_type == "area":
+        elif chart == "area":
             fig = px.area(df, x=x_col, y=y_col, title=title)
-        elif c_type == "pie":
+        elif chart == "pie":
             fig = px.pie(df, names=x_col, values=y_col, title=title)
-        elif c_type == "donut":
+        elif chart == "donut":
             fig = px.pie(df, names=x_col, values=y_col, title=title, hole=0.4)
-        elif c_type == "scatter":
+        elif chart == "scatter":
             fig = px.scatter(df, x=x_col, y=y_col, title=title)
-        elif c_type == "bubble":
-            fig = px.scatter(
-                df, x=x_col, y=y_col, size=size_col or y_col, title=title
-            )
-        elif c_type == "treemap":
+        elif chart == "bubble":
+            fig = px.scatter(df, x=x_col, y=y_col, size=size_col or y_col, title=title)
+        elif chart == "treemap":
             fig = px.treemap(df, path=[x_col], values=y_col, title=title)
-        elif c_type == "funnel":
+        elif chart == "funnel":
             fig = px.funnel(df, x=x_col, y=y_col, title=title)
         else:
-            fig = px.bar(df, x=x_col, y=y_col, title=title)  # Default fallback
+            return f"ERROR: Unsupported chart type: {chart_type}"
 
-        # Apply clean, Power BI-like layout styling
         fig.update_layout(
             template="plotly_white",
             title_font=dict(size=18, family="Segoe UI, sans-serif"),
             margin=dict(t=50, b=50, l=50, r=50),
         )
 
-        output_file = "output_chart.html"
-        fig.write_html(output_file)
-
-        return (
-            f"Success: Power BI style '{c_type}' chart generated and saved as"
-            f" '{output_file}'."
-        )
+        output_file = _unique_output_path("output_chart.html")
+        fig.write_html(str(output_file))
+        return f"SUCCESS: Chart generated: {output_file.as_posix()}"
 
     except Exception as e:
-        return f"Error creating chart: {str(e)}"
+        return f"ERROR: Chart generation failed: {e}"
+
 
 @tool("Generate TTS Audio Tool")
 def generate_tts_audio_tool(
-    text_content: str, output_filename: str = "summary_audio.mp3", lang: str = "en"
+    text_content: str,
+    output_filename: Optional[str] = None,
+    lang: str = "en",
 ) -> str:
-    """Converts a text summary or content into an audio file (MP3)
-
-    using Google Text-to-Speech (gTTS). Supports languages like 'en', 'hi', etc.
-    """
+    """gTTS se summary ka MP3 banata hai aur unique filename mein save karta hai."""
     try:
-        # Generate audio from text
-        tts = gTTS(text=text_content, lang=lang, slow=False)
+        if not text_content or not text_content.strip():
+            return "ERROR: TTS text is empty."
 
-        # Save audio file locally
-        tts.save(output_filename)
-
-        return f"Success: Audio successfully generated and saved as '{output_filename}'."
+        output_file = _unique_output_path("summary_audio.mp3", output_filename)
+        gTTS(text=text_content, lang=lang, slow=False).save(str(output_file))
+        return f"SUCCESS: Audio generated: {output_file.as_posix()}"
 
     except Exception as e:
-        return f"Error generating TTS audio: {str(e)}"
+        return f"ERROR: TTS generation failed: {e}"
+
+
+def clear_runtime_caches():
+    """Application shutdown par cached database connection pool release karta hai."""
+    if _get_database_engine.cache_info().currsize:
+        _get_database_engine().dispose()
+    _get_database_engine.cache_clear()
+    _get_whisper_model.cache_clear()
