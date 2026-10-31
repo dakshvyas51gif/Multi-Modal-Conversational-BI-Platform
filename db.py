@@ -6,73 +6,54 @@ import time
 
 load_dotenv()
 
-# .env file me ye 3 cheezein rakho (code me hardcode mat karo)
-SUPABASE_URL = os.getenv("SUPABASE_URL")                      # https://<project-ref>.supabase.co
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")                      # service-role key
-DB_CONNECTION_STRING = os.getenv("DB_CONNECTION_STRING")      # dashboard se connection string
+# .env file me ye 3 variables rakho
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+DB_CONNECTION_STRING = os.getenv("DB_CONNECTION_STRING")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL or SUPABASE_KEY missing in .env")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def create_supabase_table():
+    if not DB_CONNECTION_STRING:
+        raise ValueError("DB_CONNECTION_STRING missing in .env")
+
     commands = (
         """
-            CREATE TABLE IF NOT EXISTS user_clint(
-            id bigint generated always as identity primary key,
+        CREATE TABLE IF NOT EXISTS public.user_clint (
+            id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             user_query text,
             agent_repsons_for_sql text,
             agent_respons_summery text,
-            data timestamptz default now() );
+            data timestamptz DEFAULT now()
+        );
         """,
-        """
-        -- Strongly recommended: Enable Row Level Security (RLS) for safety
-        ALTER TABLE user_clint ENABLE ROW LEVEL SECURITY;
-        """
+        "ALTER TABLE public.user_clint ENABLE ROW LEVEL SECURITY;"
     )
 
     conn = None
     try:
-        # Connect to the Supabase PostgreSQL database
-        conn = psycopg2.connect(DB_CONNECTION_STRING)
-        cur = conn.cursor()
-
-        # Execute each SQL command
-        for command in commands:
-            cur.execute(command)
-
-        # Close communication with the PostgreSQL database server
-        cur.close()
-        # Commit the changes
+        conn = psycopg2.connect(DB_CONNECTION_STRING, connect_timeout=10)
+        with conn.cursor() as cur:
+            for command in commands:
+                cur.execute(command)
         conn.commit()
-        print("Table 'user_clint' created successfully with RLS enabled!")
+        print("Table 'user_clint' created/checked successfully; RLS enabled.")
 
-    except (Exception, psycopg2.DatabaseError) as error:
-        print(f"Error: {error}")
+    except Exception as error:
+        if conn is not None:
+            conn.rollback()
+        print(f"Error creating Supabase table: {error}")
+        raise
+
     finally:
         if conn is not None:
             conn.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     create_supabase_table()
 
-    #data insert
-    i = 0
-    while True:
-        user_query = input("enter your query")
-        agent_repsons_for_sql = input("enter sql response")
-        agent_respons_summery = input("enter summary response")
-        i += 1
-
-        try:
-            response = supabase.table("user_clint").insert({
-                "user_query": user_query,
-                "agent_repsons_for_sql": agent_repsons_for_sql,
-                "agent_respons_summery": agent_respons_summery,
-            }).execute()
-
-            # Thoda gap dene ke liye (optional)
-            time.sleep(0.5)
-
-        except Exception as e:
-            print(f"Failed to store user_v{i}: {e}")
