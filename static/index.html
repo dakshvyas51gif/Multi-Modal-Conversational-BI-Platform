@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#f8fafc" />
   <title>Conversational BI</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -41,28 +41,24 @@
           </div>
 
           <div class="conversation" id="conversation" aria-live="polite">
-            <div class="message user-message"><div class="bubble">Show me total sales by month for this year</div><span class="user-chip">U</span></div>
-            <div class="message assistant-message"><span class="bot-chip">✦</span><div class="bubble assistant-bubble">Here are the total sales by month for this year. I’ve generated a chart and key insights for you.</div></div>
+            <div class="message assistant-message">
+              <span class="bot-chip">✦</span>
+              <div class="bubble assistant-bubble">Hello! Ask a question about your business data, or switch to Voice and record your question.</div>
+            </div>
           </div>
 
           <section class="sql-card" aria-label="Generated SQL">
             <div class="sql-heading"><span>▤ &nbsp;Generated SQL</span><button class="copy-button" id="copySql" title="Copy SQL">Copy</button></div>
-            <pre><code id="sqlCode">SELECT
-  DATE_TRUNC('month', order_date) AS month,
-  SUM(total_amount) AS total_sales
-FROM sales
-WHERE order_date &gt;= '2026-01-01'
-GROUP BY month
-ORDER BY month;</code></pre>
+            <pre><code id="sqlCode">-- Your generated SQL will appear here.</code></pre>
           </section>
 
           <form class="composer" id="queryForm">
             <label class="sr-only" for="queryInput">Ask a question about your data</label>
             <input id="queryInput" type="text" placeholder="Type your question here..." autocomplete="off" />
-            <button class="mic-button" type="button" id="micButton" aria-label="Use voice input" title="Use voice input">🎙</button>
+            <button class="mic-button" type="button" id="micButton" aria-label="Start voice recording" title="Start voice recording">🎙</button>
             <button class="send-button" type="submit" aria-label="Send question" title="Send question">➤</button>
           </form>
-          <p class="demo-note">Demo data shown · Connect a database to query your own data.</p>
+          <p class="demo-note" id="connectionNote">Connected to the BI backend when this page is served by FastAPI.</p>
         </section>
 
         <section class="panel results-panel" aria-labelledby="resultsTitle">
@@ -74,46 +70,44 @@ ORDER BY month;</code></pre>
             </div>
           </div>
 
-          <section class="chart-card" id="chartView" aria-label="Monthly sales bar chart">
-            <h3 id="chartTitle">Total sales by month (2026)</h3>
-            <div class="chart-wrap">
-              <div class="y-labels" aria-hidden="true"><span>250K</span><span>200K</span><span>150K</span><span>100K</span><span>50K</span><span>0</span></div>
-              <div class="plot-area">
-                <div class="grid-lines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-                <div class="bars" id="bars"></div>
-                <div class="x-labels" id="xLabels"></div>
-              </div>
-            </div>
+          <section class="chart-card" id="chartView" aria-label="Generated interactive chart">
+            <h3 id="chartTitle">Your chart will appear here</h3>
+            <div class="chart-empty" id="chartEmpty">Run a business query to generate an interactive Plotly chart.</div>
+            <iframe id="chartFrame" class="chart-frame hidden" title="Interactive Plotly chart" loading="lazy"></iframe>
           </section>
 
-          <section class="table-card hidden" id="tableView" aria-label="Monthly sales data table">
-            <h3>Monthly sales data</h3>
-            <div class="table-scroll"><table><thead><tr><th>Month</th><th>Total sales</th></tr></thead><tbody id="salesTable"></tbody></table></div>
+          <section class="table-card hidden" id="tableView" aria-label="Query result data table">
+            <h3>Query result data</h3>
+            <div class="table-scroll">
+              <table>
+                <thead id="resultsTableHead"><tr><th>Results</th></tr></thead>
+                <tbody id="salesTable"><tr><td>Run a query to see returned data.</td></tr></tbody>
+              </table>
+            </div>
           </section>
 
           <section class="insights-card" aria-labelledby="insightsTitle">
             <h3 id="insightsTitle"><span class="sparkle">✦</span> Key insights</h3>
             <ul id="insightsList">
-              <li>Total sales show a steady growth trend throughout the year.</li>
-              <li>December recorded the highest sales at around 240K.</li>
-              <li>Sales increase more noticeably from August onwards.</li>
+              <li>Your data-backed insights will appear after a query.</li>
             </ul>
           </section>
 
           <section class="audio-card" aria-labelledby="audioTitle">
             <h3 id="audioTitle"><span class="speaker-icon">◖))</span> Audio explanation</h3>
             <div class="audio-controls">
-              <button id="speakButton" class="play-button" aria-label="Play audio explanation" title="Read insights aloud">▶</button>
-              <span class="audio-time" id="audioStatus">Read aloud</span>
-              <div class="audio-track"><span></span></div>
-              <button id="stopSpeak" class="volume-button" aria-label="Stop audio explanation" title="Stop audio">■</button>
+              <button id="speakButton" class="play-button" aria-label="Play audio explanation" title="Play audio" disabled>▶</button>
+              <span class="audio-time" id="audioStatus">Audio will appear after a query</span>
+              <div class="audio-track"><span id="audioProgress"></span></div>
+              <button id="stopSpeak" class="volume-button" aria-label="Stop audio explanation" title="Stop audio" disabled>■</button>
             </div>
+            <audio id="audioPlayer" preload="none"></audio>
           </section>
         </section>
       </main>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
-  <script src="script.js"></script>
+  <script src="/script.js"></script>
 </body>
 </html>
