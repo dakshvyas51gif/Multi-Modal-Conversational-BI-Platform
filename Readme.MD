@@ -2,11 +2,11 @@
 
 A voice- and text-driven Business Intelligence application. Users can ask business questions in natural language, have the request checked, generate and execute read-only PostgreSQL SQL, and receive a chart, written insights, and an audio explanation.
 
-> **Project status:** Development / integration-testing stage. The code includes the main workflow, but live Gemini, Whisper, PostgreSQL/Supabase, browser microphone, and deployment checks must still be completed in your own environment. Do not treat this as a production-authenticated multi-user service yet.
+> **Project status:** Development / integration-testing stage. The code includes the main workflow and uses a local Ollama model through CrewAI. Local Ollama, Whisper, PostgreSQL/Supabase, browser microphone, and deployment checks must still be verified in your own environment. Do not treat this as a production-authenticated multi-user service yet.
 
 ## Features
 
-- **Text queries:** Ask questions about the connected business database.
+- **Text queries:** Ask questions about the connected business database using the local Ollama-powered CrewAI agents.
 - **Voice queries:** Upload a browser-recorded audio clip; OpenAI Whisper transcribes it before the CrewAI workflow starts.
 - **Intent and safety gate:** The first CrewAI workflow classifies a request as `ALLOW`, `REJECT`, or `CLARIFY`. The analytics workflow starts only when the decision is explicitly `ALLOW`.
 - **Text-to-SQL:** A CrewAI agent inspects the PostgreSQL schema, generates a query, validates it with SQLGlot, and executes it through a read-only SQLAlchemy transaction.
@@ -16,59 +16,58 @@ A voice- and text-driven Business Intelligence application. Users can ask busine
 
 ## Architecture
 
-The project has **3 LLM agents across 2 CrewAI crews**. STT, database execution, and TTS are handled as a normal Python function or CrewAI tools—not as separate LLM agents.
+The project has **3 LLM agents across 2 CrewAI crews**. All three agents use the local Ollama model configured in `agent.py` (`ollama/qwen2.5-coder:3b`, served at `http://localhost:11434`). STT, database execution, and TTS are handled as a normal Python function or CrewAI tools—not as separate LLM agents.
 
 ```text
 Text query ─────────────────────────────────────────────┐
-                                                        │
+                                                        │
 Voice recording → FastAPI upload → Whisper STT ─────────┤
-                                                        ▼
-                                            Intent & Guardrail Crew
-                                            (ALLOW / REJECT / CLARIFY)
-                                                        │
-                                       ALLOW only ──────┘
-                                            │
-                                            ▼
-                                         Analytics Crew
-                                            │
-                           ┌────────────────┴─────────────────┐
-                           ▼                                  ▼
-                  Text-to-SQL Agent              Visualization & Summary Agent
-                  - Read DB schema                - Read exact SQL result
-                  - Generate SQL                  - Create Plotly chart
-                  - Validate SQL                  - Write insights
-                  - Execute read-only SQL         - Generate gTTS audio
-                           │                                  │
-                           ▼                                  ▼
-                    PostgreSQL                         outputs/*.html
-                    (Supabase DB)                      outputs/*.mp3
-                           │
-                           ▼
-                   Supabase query history
-
+                                                        ▼
+                                            Intent & Guardrail Crew
+                                            (ALLOW / REJECT / CLARIFY)
+                                                        │
+                                       ALLOW only ──────┘
+                                            │
+                                            ▼
+                                         Analytics Crew
+                                            │
+                           ┌────────────────┴─────────────────┐
+                           ▼                                  ▼
+                  Text-to-SQL Agent              Visualization & Summary Agent
+                  - Read DB schema                - Read exact SQL result
+                  - Generate SQL                  - Create Plotly chart
+                  - Validate SQL                  - Write insights
+                  - Execute read-only SQL         - Generate gTTS audio
+                           │                                  │
+                           ▼                                  ▼
+                    PostgreSQL                         outputs/*.html
+                    (Supabase DB)                      outputs/*.mp3
+                           │
+                           ▼
+                   Supabase query history
 FastAPI returns SQL, structured rows, insights, chart URL, and audio URL
-                         │
-                         ▼
-                 HTML / CSS / JavaScript dashboard
+                         │
+                         ▼
+                 HTML / CSS / JavaScript dashboard
 ```
 
 ### Main project files
 
 ```text
 Multi-Modal-BI/
-├── agent.py                 # 3 CrewAI agents, tasks, and 2 crews
-├── tools.py                 # Whisper, safety, schema, SQL, Plotly, and TTS tools
-├── db.py                    # Supabase client and query-history table setup
-├── main.py                  # FastAPI backend and API endpoints
-├── requirements.txt         # Python dependencies
-├── .env                     # Local secrets/configuration (do not commit)
+├── agent.py                 # Ollama LLM setup, 3 CrewAI agents, tasks, and 2 crews
+├── tools.py                 # Whisper, safety, schema, SQL, Plotly, and TTS tools
+├── db.py                    # Supabase client and query-history table setup
+├── main.py                  # FastAPI backend and API endpoints
+├── requirements.txt         # Python dependencies
+├── .env                     # Local secrets/configuration (do not commit)
 ├── .gitignore
 ├── README.md
 ├── static/
-│   ├── index.html
-│   ├── script.js
-│   └── style.css
-└── outputs/                 # Generated charts/audio (created automatically)
+│   ├── index.html
+│   ├── script.js
+│   └── style.css
+└── outputs/                 # Generated charts/audio (created automatically)
 ```
 
 ## Requirements
@@ -76,9 +75,10 @@ Multi-Modal-BI/
 - **Python 3.11 is recommended.** CrewAI supports Python 3.10 to below 3.14, while the OpenAI Whisper README documents compatibility through Python 3.11. Python 3.11 is the overlap safest for this project's current stack.
 - PostgreSQL database (the current SQL tools use PostgreSQL syntax and connection strings).
 - Supabase project for query history.
-- Google Gemini API key.
+- Ollama installed and running locally.
+- The `qwen2.5-coder:3b` model pulled into Ollama.
 - FFmpeg installed and available on `PATH` for Whisper audio decoding.
-- Internet access for Gemini API calls, initial Whisper model download, and gTTS audio generation.
+- Internet access to download the Ollama model the first time, download the Whisper model when needed, and generate audio with gTTS. Ollama inference runs locally after the model is downloaded.
 
 ## Setup on Windows (PowerShell)
 
@@ -88,7 +88,7 @@ Open a terminal in the project root—the folder containing `main.py`.
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 ```
 
@@ -104,7 +104,18 @@ If PowerShell blocks environment activation, use Command Prompt and run:
 pip install -r requirements.txt
 ```
 
-### 3. Install FFmpeg
+### 3. Install and prepare Ollama
+
+Install Ollama for Windows from the [official download page](https://ollama.com/download), then open Ollama and run:
+
+```powershell
+ollama pull qwen2.5-coder:3b
+ollama list
+```
+
+The model in `agent.py` is `ollama/qwen2.5-coder:3b` with `http://localhost:11434` and temperature `0.1`. Keep Ollama running while using the application. To change models, update `MODEL_NAME` in `agent.py`.
+
+### 4. Install FFmpeg
 
 For Windows with `winget`:
 
@@ -118,27 +129,22 @@ Close and reopen the terminal after installation, then verify:
 ffmpeg -version
 ```
 
-### 4. Configure environment variables
+### 5. Configure environment variables
 
 Create a file named `.env` in the same folder as `main.py`. Add your own values; do not commit this file.
 
 ```dotenv
-# Required: Google Gemini
-GOOGLE_API_KEY=replace_with_your_google_api_key
-
+# Ollama model and URL are configured directly in agent.py; no LLM API key is required.
 # Required: Supabase project (server-side key only)
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_KEY=replace_with_your_supabase_service_role_key
-
 # Required: PostgreSQL connection string
 DB_CONNECTION_STRING=postgresql+psycopg2://USER:PASSWORD@HOST:5432/DATABASE
-
 # Application settings
 APP_ENV=development
 BI_API_KEY=
 CORS_ORIGINS=
 LOG_LEVEL=INFO
-
 # Optional settings (defaults shown)
 WHISPER_MODEL=base
 BI_OUTPUT_DIR=outputs
@@ -155,7 +161,7 @@ Notes:
 - `CORS_ORIGINS` is a comma-separated list of trusted frontend origins, with no wildcard. When the frontend is served by this same FastAPI app, it can normally remain empty for local development.
 - In `APP_ENV=production`, `BI_API_KEY` must be set to a non-empty value. See the **Security notes** below: this is not a substitute for full user authentication.
 
-### 5. Initialize the query-history table
+### 6. Initialize the query-history table
 
 Run this once after configuring the Supabase and database credentials:
 
@@ -167,7 +173,7 @@ This creates `public.user_clint` if it does not exist and enables Row Level Secu
 
 **Important database-permission recommendation:** The current `DB_CONNECTION_STRING` is also used by the runtime SQL tools. For stronger least-privilege security, use an administrator-capable connection only for the one-time table setup, then configure the runtime `DB_CONNECTION_STRING` with a dedicated PostgreSQL user that has only `CONNECT`, schema `USAGE`, and `SELECT` permissions on the business tables needed for analytics. Do not run arbitrary analytics queries using a database owner or superuser account.
 
-### 6. Start the FastAPI server
+### 7. Start the FastAPI server
 
 ```powershell
 uvicorn main:app --reload
@@ -179,6 +185,7 @@ Open the dashboard:
 - Interactive API docs: <http://127.0.0.1:8000/docs>
 
 Use `--reload` for local development only. Do not use the development reload server as a production deployment command.
+
 
 ## API endpoints
 
@@ -198,9 +205,11 @@ A successful query response includes the normalized query, SQL text, structured 
 
 ## Runtime configuration reference
 
-| Variable | Required | Default / meaning |
+The reference below includes both `.env` variables and the Ollama settings currently configured directly in `agent.py`.
+
+| Setting | Required | Default / meaning |
 |---|---:|---|
-| `GOOGLE_API_KEY` | Yes | Gemini API key used by CrewAI |
+| Ollama (configured in `agent.py`) | Yes | `qwen2.5-coder:3b` at `http://localhost:11434` |
 | `SUPABASE_URL` | Yes | Supabase project URL |
 | `SUPABASE_KEY` | Yes | Backend-only Supabase service-role key |
 | `DB_CONNECTION_STRING` | Yes for database features | PostgreSQL connection string |
@@ -222,18 +231,19 @@ A successful query response includes the normalized query, SQL text, structured 
 - `BI_API_KEY` is checked for requests without an `Origin` header. The current same-origin browser flow does not provide a full login/session authentication mechanism. Add proper authentication and authorization before exposing the app publicly.
 - RLS is enabled on the history table, but the project currently uses a backend service-role key for server-side inserts. Keep that key private and do not create broad public RLS policies.
 - History is stored in Supabase, but the dashboard's History, Data Sources, and Settings navigation items are still placeholders unless separately implemented.
-- The configured Gemini model identifier is in `agent.py`. Confirm that it is available to your Google API project; update it there if your account/provider does not support it.
+- The current CrewAI LLM is the local Ollama model `ollama/qwen2.5-coder:3b`. `MODEL_NAME` and `base_url` are set directly in `agent.py`; make sure Ollama is running and that the matching model has been pulled.
 - The current platform is PostgreSQL/Supabase oriented. Snowflake support is described in the original project vision but is not implemented by these current database tools.
 
 ## Suggested smoke-test sequence
 
-1. Run `python db.py` and confirm that the `user_clint` table setup succeeds.
-2. Start the API with `uvicorn main:app --reload` and open `/docs`.
-3. Submit a simple text analytics query against a table that exists in your database.
-4. Confirm the response contains `decision: ALLOW`, the generated SQL, structured rows, and a summary.
-5. Confirm the chart opens from the returned `visualization.chart_url` and the MP3 plays from the returned `audio` URL.
-6. Record a short voice query and confirm Whisper transcribes it and the same flow completes.
-7. Submit an unsafe or non-analytics query and confirm that the analytics Crew does not run.
-8. Verify that the query history row appears in Supabase.
+1. Run `ollama list` and confirm that `qwen2.5-coder:3b` is available; keep the Ollama server running.
+2. Run `python db.py` and confirm that the `user_clint` table setup succeeds.
+3. Start the API with `uvicorn main:app --reload` and open `/docs`.
+4. Submit a simple text analytics query against a table that exists in your database.
+5. Confirm the response contains `decision: ALLOW`, the generated SQL, structured rows, and a summary.
+6. Confirm the chart opens from the returned `visualization.chart_url` and the MP3 plays from the returned `audio` URL.
+7. Record a short voice query and confirm Whisper transcribes it and the same flow completes.
+8. Submit an unsafe or non-analytics query and confirm that the analytics Crew does not run.
+9. Verify that the query history row appears in Supabase.
 
-If a step fails, use the terminal traceback and FastAPI `/docs` response to isolate whether the issue is the Gemini provider/model, database credentials/permissions, FFmpeg/Whisper, gTTS connectivity, or frontend request handling.
+If a step fails, use the terminal traceback and FastAPI `/docs` response to isolate whether the issue is the Ollama server/model, database credentials/permissions, FFmpeg/Whisper, gTTS connectivity, or frontend request handling.
