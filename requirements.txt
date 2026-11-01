@@ -3,7 +3,7 @@
 
 # CrewAI + native Google Gemini integration
 crewai[google-genai]>=1.15,<2.0
-
+ollama 
 # FastAPI backend
 fastapi>=0.115
 uvicorn[standard]>=0.30
