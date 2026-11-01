@@ -16,13 +16,12 @@ from tools import (
     clear_runtime_caches,
 )
 from db import supabase
-
 load_dotenv()
 
 
 # -------------------- LLM setup --------------------
 
-google_api_key = os.getenv("GOOGLE_API_KEY")
+"""google_api_key = os.getenv("GOOGLE_API_KEY")
 if not google_api_key:
     raise ValueError("GOOGLE_API_KEY is not set in the environment variables.")
 
@@ -30,8 +29,13 @@ llm = LLM(
     model="gemini/gemini-3.8-flash",
     api_key=google_api_key,
     temperature=1.0,
+)"""
+MODEL_NAME = "ollama/qwen2.5-coder:3b"
+llm = LLM(
+    model=MODEL_NAME,
+    base_url="http://localhost:11434",  # Local Ollama server
+    temperature=0.1,  # Jitna kam hoga, model utna sensible aur focused rahega (0.1 se 0.5 best hai)
 )
-
 
 # -------------------- 3 CrewAI Agents --------------------
 
@@ -235,8 +239,14 @@ def run_query(user_input: str):
     query_text = user_input.strip()
 
     # STT Agent removed: Whisper Python function runs before CrewAI starts.
-    audio_path = Path(query_text).expanduser()
-    if audio_path.is_file():
+    try:
+        audio_path = Path(query_text).expanduser()
+        is_audio_file = audio_path.is_file()
+    except (OSError, ValueError):
+        # Normal text query ko invalid/too-long file path samajhkar crash na kare.
+        is_audio_file = False
+
+    if is_audio_file:
         query_text = transcribe_audio_tool(str(audio_path))
         if query_text.startswith("ERROR:"):
             print(query_text)
